@@ -45,6 +45,7 @@ class Node:
         labs = labels[self.indices]
         
         if self.is_leaf:
+            self.size = len(labs)
             try:
                 self.prob = (np.bincount(labs)/len(labs))[1]
             except:
@@ -88,6 +89,7 @@ class Node:
             stack.append(self.right_child)
         else:
             self.is_leaf = True
+            self.size = len(labs)
             try:
                 self.prob = (np.bincount(labs)/len(labs))[1]
             except:
@@ -95,6 +97,41 @@ class Node:
     
     def decide(self, example):
         if self.is_leaf:
+            return self.prob
+        else:
+            if example[self.feature] >= self.threshold:
+                return self.right_child
+            else:
+                return self.left_child
+            
+    def prunify(self):
+        
+        if not self.is_leaf:
+            left_p, left_s = self.left_child.prunify()
+            right_p, right_s = self.right_child.prunify()
+            self.size = left_s + right_s
+            self.prob = (left_p*left_s+right_p*right_s)/self.size          
+            
+        return self.prob, self.size
+            
+    '''        
+    def BFS_prob(self):
+        probs = []
+        queue = [self]
+        while queue:
+            curr = queue.pop(0)
+            if curr.is_leaf:
+                prob.append(self.prob)
+            else:
+                pass
+        return np.mean(probs)
+    '''
+    
+    def decide_prunned(self, example, new_depth):
+        if (self.depth > new_depth):
+            raise ValueError('Depth exceeded')
+            
+        if (self.is_leaf) or (self.depth == new_depth):
             return self.prob
         else:
             if example[self.feature] >= self.threshold:
@@ -122,6 +159,24 @@ class Decision_Tree(BaseEstimator):
             while not curr.is_leaf:
                 curr = curr.decide(x)
             p = curr.decide(x)
+            probas[i, :] = [1 - p, p]
+        return probas
+    
+    def prunify(self):
+        self.root.prunify()
+        self.prunified = True
+    
+    def predict_proba_prunned(self, data, new_depth):
+        
+        if not self.prunified:
+            raise ValueError('Tree was not prunified')
+            
+        probas = np.zeros((data.shape[0], 2))
+        for i, x in enumerate(data):
+            curr = self.root
+            while (not curr.is_leaf) and (curr.depth != new_depth):
+                curr = curr.decide_prunned(x, new_depth)
+            p = curr.decide_prunned(x, new_depth)
             probas[i, :] = [1 - p, p]
         return probas
     
@@ -179,8 +234,24 @@ class Random_Forest:
     def predict(self, data):
         pass
         
-    def get_prunned_by_depth(self, new_depth):
-        pass
+    def prunify(self):
+        for tree in self.forest:
+            tree.prunify()
+            
+    def predit_proba_prunned(self, data, new_ntrees, new_depth):
+        
+        if (new_ntrees == self.n_trees) and (new_depth == self.max_depth):
+            probas = self.predict_proba(data)
+            return probas
+        
+        tree_sample = np.random.choice(self.n_trees, size=new_ntrees, replace=False)
+        probas = np.zeros((data.shape[0], new_ntrees))
+        for i, ti in enumerate(tree_sample):
+            est = self.forest[ti]
+            p = est.predict_proba_prunned(data, new_depth)
+            probas[:, i] = p[:, 1]
+        probas = probas.mean(axis=1)
+        return probas
 
     def get_smaller_tree(self, new_ntrees):
         pass
@@ -216,7 +287,7 @@ if __name__ == "__main__":
         
     data = comm.bcast(data)
     labels = comm.bcast(labels)
-    print(args['n_trees'], args['max_depth'], args['feature_size'])
+    #print(args['n_trees'], args['max_depth'], args['feature_size'])
     model = Random_Forest(args['n_trees'], args['max_depth'], args['feature_size'])
     model.fit(data, labels)
     comm.Barrier()
